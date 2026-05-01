@@ -1,42 +1,52 @@
 ﻿using UnityEngine;
 
-public class RDSController : MonoBehaviour
+[System.Serializable]
+public class DisplayProfile
 {
-    // =========================================================
-    // Quad
-    // =========================================================
+    [Header("Resolution")]
+    public int widthPx = 3840;
+    public int heightPx = 2160;
+
+    [Header("Pixel Pitch")]
+    [Tooltip("pixel pitch [mm/px]")]
+    public float pp = 0.1845236f;
 
     [Header("Quad Renderers")]
     public Renderer leftQuadRenderer;
     public Renderer rightQuadRenderer;
 
+    [Header("Cameras")]
+    public Camera leftCamera;
+    public Camera rightCamera;
+}
+
+public class RDSController : MonoBehaviour
+{
     // =========================================================
-    // Image / Display
+    // Display Profile
     // =========================================================
 
-    [Header("Resolution")]
-    public int widthPx = 3840;
-    public int heightPx = 2160;
+    [Header("Display Profile")]
+    [Tooltip("0: displayProfiles[0], 1: displayProfiles[1]")]
+    public int displayNum = 0;
+    public int displayL = 1;
+    public int displayR = 2;
 
-    [Header("Display")]
-    [Tooltip("pixel pitch [mm/px]")]
-    public float pp = 0.1845236f;
+    public DisplayProfile[] displayProfiles;
 
-    [Tooltip("1 world unit が何 mm か")]
-    public float worldUnitToMm = 1.0f;
+
+    private float worldUnitToMm = 1.0f;
 
     // =========================================================
     // Viewer
     // =========================================================
 
     [Header("Viewer Position [world]")]
-    [Tooltip("ディスプレイ中心基準．右が+")]
+
     public float viewerXWorld = 0.0f;
 
-    [Tooltip("ディスプレイ中心基準．上が+")]
     public float viewerYWorld = 0.0f;
 
-    [Tooltip("ディスプレイ面から観察者までの距離")]
     public float viewerZWorld = 1000.0f;
 
     [Header("IPD")]
@@ -47,7 +57,7 @@ public class RDSController : MonoBehaviour
     // =========================================================
 
     [Header("Target Disparity Angle [deg]")]
-    [Tooltip("alpha - beta の目標値．正なら正方向，負なら負方向")]
+ 
     public float targetAngleDeg = 0.5f;
 
     // =========================================================
@@ -55,7 +65,7 @@ public class RDSController : MonoBehaviour
     // =========================================================
 
     [Header("Circle Stimulus [world]")]
-    [Tooltip("ディスプレイ中心基準．右が+")]
+
     public float circleCenterXWorld = 0.0f;
 
     [Tooltip("ディスプレイ中心基準．上が+")]
@@ -119,6 +129,13 @@ public class RDSController : MonoBehaviour
     [SerializeField] private float circleCenterYmm;
     [SerializeField] private float circleRadiusMm;
 
+    [SerializeField] private int activeWidthPx;
+    [SerializeField] private int activeHeightPx;
+    [SerializeField] private float activePp;
+
+    private Renderer activeLeftQuadRenderer;
+    private Renderer activeRightQuadRenderer;
+
     private Material leftMat;
     private Material rightMat;
 
@@ -128,6 +145,7 @@ public class RDSController : MonoBehaviour
 
     void Start()
     {
+        ApplyDisplayProfile();
         InitializeMaterials();
         UpdateRDS();
     }
@@ -142,9 +160,15 @@ public class RDSController : MonoBehaviour
 
     void OnValidate()
     {
-        widthPx = Mathf.Max(1, widthPx);
-        heightPx = Mathf.Max(1, heightPx);
-        pp = Mathf.Max(0.000001f, pp);
+        ValidateParameters();
+    }
+
+    // =========================================================
+    // Validation
+    // =========================================================
+
+    void ValidateParameters()
+    {
         worldUnitToMm = Mathf.Max(0.000001f, worldUnitToMm);
         IPD = Mathf.Max(0.0f, IPD);
         circleRadiusWorld = Mathf.Max(0.0f, circleRadiusWorld);
@@ -158,6 +182,101 @@ public class RDSController : MonoBehaviour
         {
             negativeDispMinPx = negativeDispMaxPx;
         }
+
+        if (displayProfiles != null && displayProfiles.Length > 0)
+        {
+            displayNum = Mathf.Clamp(displayNum, 0, displayProfiles.Length - 1);
+
+            for (int i = 0; i < displayProfiles.Length; i++)
+            {
+                if (displayProfiles[i] == null)
+                {
+                    continue;
+                }
+
+                displayProfiles[i].widthPx = Mathf.Max(1, displayProfiles[i].widthPx);
+                displayProfiles[i].heightPx = Mathf.Max(1, displayProfiles[i].heightPx);
+                displayProfiles[i].pp = Mathf.Max(0.000001f, displayProfiles[i].pp);
+            }
+        }
+    }
+
+    // =========================================================
+    // Display Profile
+    // =========================================================
+
+    public void ApplyDisplayProfile()
+    {
+        ValidateParameters();
+
+        if (displayProfiles == null || displayProfiles.Length == 0)
+        {
+            Debug.LogError("Display Profiles が設定されていません。");
+            return;
+        }
+
+        displayNum = Mathf.Clamp(displayNum, 0, displayProfiles.Length - 1);
+
+        DisplayProfile profile = displayProfiles[displayNum];
+
+        if (profile == null)
+        {
+            Debug.LogError($"DisplayProfile {displayNum} が null です。");
+            return;
+        }
+
+        activeWidthPx = Mathf.Max(1, profile.widthPx);
+        activeHeightPx = Mathf.Max(1, profile.heightPx);
+        activePp = Mathf.Max(0.000001f, profile.pp);
+
+        activeLeftQuadRenderer = profile.leftQuadRenderer;
+        activeRightQuadRenderer = profile.rightQuadRenderer;
+
+        DisableAllProfileCameras();
+
+        if (profile.leftCamera != null)
+        {
+            profile.leftCamera.targetDisplay = Mathf.Max(0, displayL);
+            profile.leftCamera.enabled = true;
+        }
+
+        if (profile.rightCamera != null)
+        {
+            profile.rightCamera.targetDisplay = Mathf.Max(0, displayR);
+            profile.rightCamera.enabled = true;
+        }
+
+        leftMat = null;
+        rightMat = null;
+        InitializeMaterials();
+    }
+
+    void DisableAllProfileCameras()
+    {
+        if (displayProfiles == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < displayProfiles.Length; i++)
+        {
+            DisplayProfile profile = displayProfiles[i];
+
+            if (profile == null)
+            {
+                continue;
+            }
+
+            if (profile.leftCamera != null)
+            {
+                profile.leftCamera.enabled = false;
+            }
+
+            if (profile.rightCamera != null)
+            {
+                profile.rightCamera.enabled = false;
+            }
+        }
     }
 
     // =========================================================
@@ -166,19 +285,16 @@ public class RDSController : MonoBehaviour
 
     void InitializeMaterials()
     {
-        if (leftQuadRenderer == null || rightQuadRenderer == null)
+        if (activeLeftQuadRenderer == null || activeRightQuadRenderer == null)
         {
-            Debug.LogError("LeftQuadRenderer または RightQuadRenderer が未設定です。");
+            Debug.LogError("Profile内の LeftQuadRenderer または RightQuadRenderer が未設定です。");
             return;
         }
 
-        // 左右Quadに別々のMaterialを貼っておく前提
-        // RDS_L.mat: _EyeSign = +1
-        // RDS_R.mat: _EyeSign = -1
-        leftMat = leftQuadRenderer.material;
-        rightMat = rightQuadRenderer.material;
+        leftMat = activeLeftQuadRenderer.material;
+        rightMat = activeRightQuadRenderer.material;
 
-        if (leftQuadRenderer.sharedMaterial == rightQuadRenderer.sharedMaterial)
+        if (activeLeftQuadRenderer.sharedMaterial == activeRightQuadRenderer.sharedMaterial)
         {
             Debug.LogWarning(
                 "LeftQuad と RightQuad が同じMaterialアセットを参照しています。" +
@@ -209,6 +325,8 @@ public class RDSController : MonoBehaviour
 
     public void UpdateRDS()
     {
+        ApplyDisplayProfile();
+
         if (leftMat == null || rightMat == null)
         {
             InitializeMaterials();
@@ -227,8 +345,6 @@ public class RDSController : MonoBehaviour
         actualAngleDeg = DispPxToAngleDeg(bestDisparityPx);
         errorDeg = Mathf.Abs(actualAngleDeg - targetAngleDeg);
 
-        // デバッグ表示用
-        // 実際の描画ではShader側で _EyeSign * _HalfDisparityPx する
         leftShiftPx = halfDisparityPx;
         rightShiftPx = -halfDisparityPx;
 
@@ -247,7 +363,6 @@ public class RDSController : MonoBehaviour
 
     void UpdateDerivedParameters()
     {
-        // world -> mm
         viewerXmm = viewerXWorld * worldUnitToMm;
         viewerYmm = viewerYWorld * worldUnitToMm;
         viewerZmm = viewerZWorld * worldUnitToMm;
@@ -256,17 +371,9 @@ public class RDSController : MonoBehaviour
         circleCenterYmm = circleCenterYWorld * worldUnitToMm;
         circleRadiusMm = circleRadiusWorld * worldUnitToMm;
 
-        // mm -> px
-        // world座標:
-        //   x: 右が+
-        //   y: 上が+
-        //
-        // shader内pixel座標:
-        //   x: 右が+
-        //   y: 下が+
-        circleCenterXPx = (widthPx / 2.0f) + (circleCenterXmm / pp);
-        circleCenterYPx = (heightPx / 2.0f) - (circleCenterYmm / pp);
-        circleRadiusPx = circleRadiusMm / pp;
+        circleCenterXPx = (activeWidthPx / 2.0f) + (circleCenterXmm / activePp);
+        circleCenterYPx = (activeHeightPx / 2.0f) - (circleCenterYmm / activePp);
+        circleRadiusPx = circleRadiusMm / activePp;
     }
 
     // =========================================================
@@ -275,11 +382,8 @@ public class RDSController : MonoBehaviour
 
     void ApplyMaterialParams(Material mat)
     {
-        // EyeSignはMaterial側で設定する
-        // それ以外の数値はControllerから渡す
-
-        mat.SetFloat("_WidthPx", widthPx);
-        mat.SetFloat("_HeightPx", heightPx);
+        mat.SetFloat("_WidthPx", activeWidthPx);
+        mat.SetFloat("_HeightPx", activeHeightPx);
 
         mat.SetFloat("_CircleCenterXPx", circleCenterXPx);
         mat.SetFloat("_CircleCenterYPx", circleCenterYPx);
@@ -300,16 +404,11 @@ public class RDSController : MonoBehaviour
 
     float DispPxToAngleDeg(float dispPx)
     {
-        float shiftMm = dispPx * pp;
+        float shiftMm = dispPx * activePp;
 
-        // 融合後の見かけ中心
         float mx = circleCenterXmm;
         float my = circleCenterYmm;
 
-        // 左右画像上の対応点
-        // 正のdisp:
-        //   left  = +disp/2
-        //   right = -disp/2
         float lx = mx + shiftMm / 2.0f;
         float rx = mx - shiftMm / 2.0f;
 
@@ -398,10 +497,10 @@ public class RDSController : MonoBehaviour
 
     void ApplyQuadAspect()
     {
-        float aspect = (float)widthPx / heightPx;
+        float aspect = (float)activeWidthPx / activeHeightPx;
 
-        ApplyAspectToRenderer(leftQuadRenderer, aspect);
-        ApplyAspectToRenderer(rightQuadRenderer, aspect);
+        ApplyAspectToRenderer(activeLeftQuadRenderer, aspect);
+        ApplyAspectToRenderer(activeRightQuadRenderer, aspect);
     }
 
     void ApplyAspectToRenderer(Renderer renderer, float aspect)
@@ -414,8 +513,25 @@ public class RDSController : MonoBehaviour
         Transform t = renderer.transform;
         Vector3 s = t.localScale;
 
-        // yを基準にxだけ調整
         t.localScale = new Vector3(s.y * aspect, s.y, s.z);
     }
+
+    // =========================================================
+    // Debug utility
+    // =========================================================
+
+    [ContextMenu("Apply Display Profile Now")]
+    public void ApplyDisplayProfileNow()
+    {
+        ApplyDisplayProfile();
+        UpdateRDS();
+    }
+
+    [ContextMenu("Update RDS Now")]
+    public void UpdateRDSNow()
+    {
+        UpdateRDS();
+    }
+
 
 }
