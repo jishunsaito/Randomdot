@@ -3651,7 +3651,7 @@ MonoBehaviour:
     rightCamera: {fileID: 554576758}
   - widthPx: 3840
     heightPx: 2160
-    pp: 0.18
+    pp: 0.1845
     leftQuadRenderer: {fileID: 1960341446}
     rightQuadRenderer: {fileID: 1287026093}
     leftCamera: {fileID: 2131486574}
@@ -3675,11 +3675,32 @@ MonoBehaviour:
   autoUpdate: 1
   autoSetQuadAspect: 0
   bestDisparityPx: 47
+  halfDisparityPx: 0
+  actualAngleDeg: 0
+  errorDeg: 0
   leftShiftPx: 23
   rightShiftPx: -24
   circleCenterXPx: 1920
   circleCenterYPx: 1080
   circleRadiusPx: 162.58083
+  viewerXmm: 0
+  viewerYmm: 0
+  viewerZmm: 0
+  circleCenterXmm: 0
+  circleCenterYmm: 0
+  circleRadiusMm: 0
+  activeWidthPx: 0
+  activeHeightPx: 0
+  activePp: 0
+  fixationZmm: 0
+  viewerToFixationMm: 0
+  leftEyeToFixationMm: 0
+  rightEyeToFixationMm: 0
+  cropEnabled: 0
+  cropHalfWidthMm: 0
+  cropHalfHeightMm: 0
+  curvedPhysicalWidthMm: 0
+  curvedPhysicalHeightMm: 0
 --- !u!4 &1263955917
 Transform:
   m_ObjectHideFlags: 0

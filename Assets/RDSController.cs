@@ -30,10 +30,20 @@ public class RDSController : MonoBehaviour
     [Tooltip("0: curved display, 1: flat display")]
     public int displayNum = 0;
 
+    [Tooltip("Camera L を出す Unity Display index。0 = Display 1, 1 = Display 2")]
     public int displayL = 1;
+
+    [Tooltip("Camera R を出す Unity Display index。0 = Display 1, 1 = Display 2")]
     public int displayR = 2;
 
     public DisplayProfile[] displayProfiles;
+
+    // =========================================================
+    // Geometry constants
+    // =========================================================
+
+    // 1000R曲面ディスプレイの曲率半径 [mm]
+    private const float Curvature = 1000.0f;
 
     private float worldUnitToMm = 1.0f;
 
@@ -63,10 +73,10 @@ public class RDSController : MonoBehaviour
     [Header("Circle Stimulus [world]")]
     public float circleCenterXWorld = 0.0f;
 
-    [Tooltip("ディスプレイ中心基準．上が+")]
+    [Tooltip("ディスプレイ中心基準。上が+")]
     public float circleCenterYWorld = 0.0f;
 
-    [Tooltip("円の半径．worldUnitToMmでmmに変換される")]
+    [Tooltip("円の半径。worldUnitToMmでmmに変換される")]
     public float circleRadiusWorld = 30.0f;
 
     // =========================================================
@@ -87,8 +97,8 @@ public class RDSController : MonoBehaviour
     [Range(0.0f, 1.0f)]
     public float pWhite = 0.5f;
 
-    public float backgroundSeed = 0.0f;
-    public float objectSeed = 100.0f;
+    public float backgroundSeed = 1.0f;
+    public float objectSeed = 1.0f;
 
     // =========================================================
     // Debug / Update
@@ -105,9 +115,9 @@ public class RDSController : MonoBehaviour
 
     [Header("Result")]
     [SerializeField] private int bestDisparityPx;
-    private float halfDisparityPx;
-    private float actualAngleDeg;
-    private float errorDeg;
+    [SerializeField] private float halfDisparityPx;
+    [SerializeField] private float actualAngleDeg;
+    [SerializeField] private float errorDeg;
 
     [SerializeField] private float leftShiftPx;
     [SerializeField] private float rightShiftPx;
@@ -116,23 +126,30 @@ public class RDSController : MonoBehaviour
     [SerializeField] private float circleCenterYPx;
     [SerializeField] private float circleRadiusPx;
 
-    private float viewerXmm;
-    private float viewerYmm;
-    private float viewerZmm;
+    [SerializeField] private float viewerXmm;
+    [SerializeField] private float viewerYmm;
+    [SerializeField] private float viewerZmm;
 
-    private float circleCenterXmm;
-    private float circleCenterYmm;
-    private float circleRadiusMm;
+    [SerializeField] private float circleCenterXmm;
+    [SerializeField] private float circleCenterYmm;
+    [SerializeField] private float circleRadiusMm;
 
-    private int activeWidthPx;
-    private int activeHeightPx;
-    private float activePp;
+    [SerializeField] private int activeWidthPx;
+    [SerializeField] private int activeHeightPx;
+    [SerializeField] private float activePp;
 
+    [Header("Geometry Debug")]
+    [SerializeField] private float fixationZmm;
+    [SerializeField] private float viewerToFixationMm;
+    [SerializeField] private float leftEyeToFixationMm;
+    [SerializeField] private float rightEyeToFixationMm;
 
-    private float fixationZmm;
-    private float viewerToFixationMm;
-    private float leftEyeToFixationMm;
-    private float rightEyeToFixationMm;
+    [Header("Crop Debug")]
+    [SerializeField] private bool cropEnabled;
+    [SerializeField] private float cropHalfWidthMm;
+    [SerializeField] private float cropHalfHeightMm;
+    [SerializeField] private float curvedPhysicalWidthMm;
+    [SerializeField] private float curvedPhysicalHeightMm;
 
     private Renderer activeLeftQuadRenderer;
     private Renderer activeRightQuadRenderer;
@@ -183,6 +200,9 @@ public class RDSController : MonoBehaviour
         {
             negativeDispMinPx = negativeDispMaxPx;
         }
+
+        displayL = Mathf.Max(0, displayL);
+        displayR = Mathf.Max(0, displayR);
 
         if (displayProfiles != null && displayProfiles.Length > 0)
         {
@@ -339,6 +359,7 @@ public class RDSController : MonoBehaviour
         }
 
         UpdateDerivedParameters();
+        UpdateCropParameters();
 
         bestDisparityPx = SolveDisparityForTargetAngle();
         halfDisparityPx = bestDisparityPx / 2.0f;
@@ -378,6 +399,45 @@ public class RDSController : MonoBehaviour
     }
 
     // =========================================================
+    // Crop
+    // =========================================================
+
+    void UpdateCropParameters()
+    {
+        cropEnabled = false;
+        cropHalfWidthMm = 0.0f;
+        cropHalfHeightMm = 0.0f;
+        curvedPhysicalWidthMm = 0.0f;
+        curvedPhysicalHeightMm = 0.0f;
+
+        // displayNum = 1 の平面条件だけ，
+        // displayNum = 0 の曲面ディスプレイの物理サイズに合わせて黒マスクする
+        if (displayNum != 1)
+        {
+            return;
+        }
+
+        if (displayProfiles == null || displayProfiles.Length < 1 || displayProfiles[0] == null)
+        {
+            return;
+        }
+
+        DisplayProfile curvedProfile = displayProfiles[0];
+
+        float curvedPp = Mathf.Max(0.000001f, curvedProfile.pp);
+        int curvedWidthPx = Mathf.Max(1, curvedProfile.widthPx);
+        int curvedHeightPx = Mathf.Max(1, curvedProfile.heightPx);
+
+        curvedPhysicalWidthMm = curvedPp * curvedWidthPx;
+        curvedPhysicalHeightMm = curvedPp * curvedHeightPx;
+
+        cropHalfWidthMm = curvedPhysicalWidthMm * 0.5f;
+        cropHalfHeightMm = curvedPhysicalHeightMm * 0.5f;
+
+        cropEnabled = true;
+    }
+
+    // =========================================================
     // Material
     // =========================================================
 
@@ -385,6 +445,7 @@ public class RDSController : MonoBehaviour
     {
         mat.SetFloat("_WidthPx", activeWidthPx);
         mat.SetFloat("_HeightPx", activeHeightPx);
+        mat.SetFloat("_Pp", activePp);
 
         mat.SetFloat("_CircleCenterXPx", circleCenterXPx);
         mat.SetFloat("_CircleCenterYPx", circleCenterYPx);
@@ -397,6 +458,10 @@ public class RDSController : MonoBehaviour
         mat.SetFloat("_ObjectSeed", objectSeed);
 
         mat.SetFloat("_ShowCircleGuide", showCircleGuide ? 1.0f : 0.0f);
+
+        mat.SetFloat("_CropEnabled", cropEnabled ? 1.0f : 0.0f);
+        mat.SetFloat("_CropHalfWidthMm", cropHalfWidthMm);
+        mat.SetFloat("_CropHalfHeightMm", cropHalfHeightMm);
     }
 
     // =========================================================
@@ -406,41 +471,32 @@ public class RDSController : MonoBehaviour
     Vector3 GetDisplayPointMm(float xMm, float yMm)
     {
         // displayNum = 1:
-        // 平面ディスプレイ．表示面は z = 0 とする．
-        // 円中心が横に動くと，視聴者から円中心までの距離は自然に長くなる．
+        // 平面ディスプレイ．表示面を z = 0 とする．
         if (displayNum == 1)
         {
             return new Vector3(xMm, yMm, 0.0f);
         }
 
         // displayNum = 0:
-        // 曲面ディスプレイ．
-        // 水平方向について，視聴者から表示点までの距離が一定になるようにzを補正する．
+        // 1000R曲面ディスプレイ．
+        // 水平方向だけ曲率を持つ円柱面として扱う．
         //
-        // 視聴者位置: (viewerXmm, viewerYmm, viewerZmm)
-        // ディスプレイ中心: (0, 0, 0)
+        // ディスプレイ中心 = (0, 0, 0)
+        // 視聴者側 = +z
+        // 曲率中心 = (0, 0, Curvature)
         //
-        // x-z平面で，
-        // (x - viewerX)^2 + (z - viewerZ)^2 = R^2
-        // R = ディスプレイ中心までの距離
+        // x^2 + (z - Curvature)^2 = Curvature^2
         //
-        // 中心 x=0 のとき z=0 になる方の解を使う．
+        // z = Curvature - sqrt(Curvature^2 - x^2)
 
-        float radiusXZ = Mathf.Sqrt(
-            viewerXmm * viewerXmm +
-            viewerZmm * viewerZmm
-        );
-
-        float dx = xMm - viewerXmm;
-
-        float inside = radiusXZ * radiusXZ - dx * dx;
+        float inside = Curvature * Curvature - xMm * xMm;
 
         if (inside < 0.0f)
         {
             inside = 0.0f;
         }
 
-        float zMm = viewerZmm - Mathf.Sqrt(inside);
+        float zMm = Curvature - Mathf.Sqrt(inside);
 
         return new Vector3(xMm, yMm, zMm);
     }
@@ -453,14 +509,9 @@ public class RDSController : MonoBehaviour
     {
         float shiftMm = dispPx * activePp;
 
-        // 融合後の見かけ中心 = 円中心
         float mx = circleCenterXmm;
         float my = circleCenterYmm;
 
-        // 左右画像上の対応点
-        // 正のdisp:
-        //   left  = +disp/2
-        //   right = -disp/2
         float lx = mx + shiftMm / 2.0f;
         float rx = mx - shiftMm / 2.0f;
 
@@ -476,8 +527,6 @@ public class RDSController : MonoBehaviour
             viewerZmm
         );
 
-        // ここで displayNum に応じて，
-        // 曲面なら z を補正，平面なら z=0 として扱う．
         Vector3 leftPoint = GetDisplayPointMm(lx, my);
         Vector3 rightPoint = GetDisplayPointMm(rx, my);
         Vector3 midPoint = GetDisplayPointMm(mx, my);

@@ -49,6 +49,7 @@
             // =====================================================
             float _WidthPx;
             float _HeightPx;
+            float _Pp;
 
             float _CircleCenterXPx;
             float _CircleCenterYPx;
@@ -61,6 +62,10 @@
             float _ObjectSeed;
 
             float _ShowCircleGuide;
+
+            float _CropEnabled;
+            float _CropHalfWidthMm;
+            float _CropHalfHeightMm;
 
             struct Attributes
             {
@@ -105,9 +110,6 @@
             float Random01(uint2 cell, uint seed)
             {
                 uint h = Hash2D(cell, seed);
-
-                // 24bit分を0〜1に正規化
-                // 1bit白黒化には十分
                 return (float)(h & 0x00FFFFFFu) / 16777215.0;
             }
 
@@ -119,8 +121,6 @@
 
             uint SeedToUint(float seed)
             {
-                // C#からfloatで渡されたseedを整数seedとして扱う
-                // seedは 0, 1, 100 など整数値で使うのがよい
                 return (uint)max(seed, 0.0);
             }
 
@@ -128,6 +128,7 @@
             {
                 float widthPx = max(_WidthPx, 1.0);
                 float heightPx = max(_HeightPx, 1.0);
+                float pp = max(_Pp, 0.000001);
 
                 // =================================================
                 // UV -> pixel座標
@@ -138,8 +139,31 @@
                 pixel.x = input.uv.x * widthPx;
                 pixel.y = (1.0 - input.uv.y) * heightPx;
 
+                // =================================================
+                // 物理サイズベースのクロップ
+                // displayNum = 1 のときだけC#側で有効化される
+                //
+                // 描画内容は縮小せず，
+                // 現在の平面ディスプレイ上のmm座標が，
+                // 曲面ディスプレイ実寸の範囲外なら黒にする
+                // =================================================
+                if (_CropEnabled > 0.5)
+                {
+                    float xMm = (pixel.x - widthPx * 0.5) * pp;
+                    float yMm = (heightPx * 0.5 - pixel.y) * pp;
+
+                    bool outside =
+                        (abs(xMm) > _CropHalfWidthMm) ||
+                        (abs(yMm) > _CropHalfHeightMm);
+
+                    if (outside)
+                    {
+                        return half4(0.0, 0.0, 0.0, 1.0);
+                    }
+                }
+
                 // 1 px単位のランダムドット
-                // もしモアレが残る場合は 2.0 などにする
+                // モアレが残る場合は 2.0 などに変更
                 float dotSizePx = 1.0;
 
                 // =================================================
@@ -159,7 +183,6 @@
                 // =================================================
                 float shiftPx = _EyeSign * _HalfDisparityPx;
 
-                // この眼で表示される円中心
                 float2 shiftedCenter = float2(
                     _CircleCenterXPx + shiftPx,
                     _CircleCenterYPx
@@ -187,7 +210,6 @@
                     _PWhite
                 );
 
-                // 円内だけobj，外側はbg
                 float value = lerp(bg, obj, insideCircle);
 
                 // =================================================
