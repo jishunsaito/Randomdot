@@ -45,7 +45,6 @@
 
             // =====================================================
             // C#側から受け取る値
-            // Propertiesには書かない
             // =====================================================
             float _WidthPx;
             float _HeightPx;
@@ -57,7 +56,6 @@
 
             float _HalfDisparityPx;
 
-            float _PWhite;
             float _BackgroundSeed;
             float _ObjectSeed;
 
@@ -92,7 +90,6 @@
 
             // =====================================================
             // PCG風 uint hash
-            // sin(dot())を使わず，整数セル座標から乱数を作る
             // =====================================================
 
             uint PcgHash(uint x)
@@ -116,15 +113,45 @@
                 return (float)(h & 0x00FFFFFFu) / 16777215.0;
             }
 
-            float RandomDot(uint2 cell, uint seed, float pWhite)
+            float RandomGray(uint2 cell, uint seed)
             {
-                float r = Random01(cell, seed);
-                return (r < pWhite) ? 1.0 : 0.0;
+                return Random01(cell, seed);
             }
 
             uint SeedToUint(float seed)
             {
                 return (uint)max(seed, 0.0);
+            }
+
+            // =====================================================
+            // ランダムグレースケールの双線形補間サンプリング
+            //
+            // 入力pは「整数座標が画素中心」に対応する座標系
+            // p=(i,j) なら RandomGray(i,j)
+            // p=(i+0.25,j) なら隣接値を25%ブレンド
+            // =====================================================
+
+            float SampleRandomGrayBilinear(float2 p, uint seed)
+            {
+                float2 baseF = floor(p);
+                float2 fracF = frac(p);
+
+                int2 baseI = int2(baseF);
+
+                uint2 c00 = uint2(baseI.x,     baseI.y);
+                uint2 c10 = uint2(baseI.x + 1, baseI.y);
+                uint2 c01 = uint2(baseI.x,     baseI.y + 1);
+                uint2 c11 = uint2(baseI.x + 1, baseI.y + 1);
+
+                float v00 = RandomGray(c00, seed);
+                float v10 = RandomGray(c10, seed);
+                float v01 = RandomGray(c01, seed);
+                float v11 = RandomGray(c11, seed);
+
+                float vx0 = lerp(v00, v10, fracF.x);
+                float vx1 = lerp(v01, v11, fracF.x);
+
+                return lerp(vx0, vx1, fracF.y);
             }
 
             half4 frag(Varyings input) : SV_Target
@@ -135,8 +162,7 @@
 
                 // =================================================
                 // UV -> 実画面pixel座標
-                // pixel.x: 左から右
-                // pixel.y: 上から下
+                // フラグメント中心は概ね i+0.5 に位置する
                 // =================================================
                 float2 pixel;
                 pixel.x = input.uv.x * widthPx;
@@ -144,21 +170,12 @@
 
                 // =================================================
                 // 仮想曲面ディスプレイ座標
-                //
-                // displayNum=1の平面条件では，
-                // C#側から _VirtualOffsetXPx / _VirtualOffsetYPx が入る．
-                //
-                // 実画面上では仮想ディスプレイ全体がoffset方向へ動く．
-                // そのため，描画内容の生成には offset を引いた座標を使う．
                 // =================================================
-                float2 virtualPixel = pixel - float2(_VirtualOffsetXPx, _VirtualOffsetYPx);
+                float2 virtualPixel =
+                    pixel - float2(_VirtualOffsetXPx, _VirtualOffsetYPx);
 
                 // =================================================
                 // 物理サイズベースのクロップ
-                //
-                // 描画内容は縮小せず，
-                // 仮想曲面ディスプレイ座標上のmm座標が，
-                // 曲面ディスプレイ実寸の範囲外なら黒にする．
                 // =================================================
                 if (_CropEnabled > 0.5)
                 {
@@ -175,24 +192,24 @@
                     }
                 }
 
-                // 1 px単位のランダムドット
-                // モアレが残る場合は 2.0 などに変更
-                float dotSizePx = 1.0;
+                // =================================================
+                // ランダムパターン参照座標
+                //
+                // pixel座標は画素中心が i+0.5 なので，
+                // -0.5 して整数座標を画素中心に合わせる
+                // =================================================
+                float2 baseSampleCoord = virtualPixel - float2(0.5, 0.5);
 
                 // =================================================
-                // 背景ドット
+                // 背景グレースケール
                 // =================================================
-                uint2 bgCell = (uint2)floor(virtualPixel / dotSizePx);
-                float bg = RandomDot(
-                    bgCell,
-                    SeedToUint(_BackgroundSeed),
-                    _PWhite
+                float bg = SampleRandomGrayBilinear(
+                    baseSampleCoord,
+                    SeedToUint(_BackgroundSeed)
                 );
 
                 // =================================================
                 // 左右視差
-                // L Material: _EyeSign = +1
-                // R Material: _EyeSign = -1
                 // =================================================
                 float shiftPx = _EyeSign * _HalfDisparityPx;
 
@@ -207,20 +224,24 @@
                 float2 diff = virtualPixel - shiftedCenter;
                 float dist2 = dot(diff, diff);
 
-                float insideCircle = step(dist2, _CircleRadiusPx * _CircleRadiusPx);
+                float insideCircle = step(
+                    dist2,
+                    _CircleRadiusPx * _CircleRadiusPx
+                );
 
                 // =================================================
-                // 円内部ドット
-                // 円内部は「シフト前の座標」で乱数を生成する
-                // これにより，左右で同じ円内部パターンが対応する
+                // 円内部グレースケール
+                //
+                // 円自体は ±shiftPx 移動
+                // 円内部パターンは shift を戻した座標で参照
+                // これにより左右対応を保つ
                 // =================================================
-                float2 sourcePixel = virtualPixel - float2(shiftPx, 0.0);
-                uint2 objCell = (uint2)floor(sourcePixel / dotSizePx);
+                float2 objectSampleCoord =
+                    baseSampleCoord - float2(shiftPx, 0.0);
 
-                float obj = RandomDot(
-                    objCell,
-                    SeedToUint(_ObjectSeed),
-                    _PWhite
+                float obj = SampleRandomGrayBilinear(
+                    objectSampleCoord,
+                    SeedToUint(_ObjectSeed)
                 );
 
                 float value = lerp(bg, obj, insideCircle);
@@ -231,7 +252,12 @@
                 if (_ShowCircleGuide > 0.5)
                 {
                     float d = sqrt(dist2);
-                    float edge = 1.0 - smoothstep(1.0, 3.0, abs(d - _CircleRadiusPx));
+                    float edge = 1.0 - smoothstep(
+                        1.0,
+                        3.0,
+                        abs(d - _CircleRadiusPx)
+                    );
+
                     value = lerp(value, 1.0, edge * 0.7);
                 }
 

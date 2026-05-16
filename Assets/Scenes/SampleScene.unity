@@ -3664,11 +3664,14 @@ MonoBehaviour:
   circleCenterXWorld: 0
   circleCenterYWorld: 0
   circleRadiusWorld: 30
-  positiveDispMinPx: 1
+  flatVirtualOffsetXWorld: 0
+  flatVirtualOffsetYWorld: 0
+  positiveDispMinPx: 0
   positiveDispMaxPx: 400
   negativeDispMinPx: -400
-  negativeDispMaxPx: -1
-  pWhite: 0.5
+  negativeDispMaxPx: 0
+  fineSearchHalfWidthPx: 1
+  fineSearchStepPx: 0.01
   backgroundSeed: 0
   objectSeed: 100
   showCircleGuide: 0
@@ -3701,6 +3704,10 @@ MonoBehaviour:
   cropHalfHeightMm: 0
   curvedPhysicalWidthMm: 0
   curvedPhysicalHeightMm: 0
+  flatVirtualOffsetXmm: 0
+  flatVirtualOffsetYmm: 0
+  flatVirtualOffsetXPx: 0
+  flatVirtualOffsetYPx: 0
 --- !u!4 &1263955917
 Transform:
   m_ObjectHideFlags: 0

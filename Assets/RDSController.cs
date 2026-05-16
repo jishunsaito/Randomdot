@@ -94,21 +94,28 @@ public class RDSController : MonoBehaviour
     // Disparity search
     // =========================================================
 
-    [Header("Disparity Search Range [px]")]
-    private int positiveDispMinPx = 1;
-    private int positiveDispMaxPx = 400;
-    private int negativeDispMinPx = -400;
-    private int negativeDispMaxPx = -1;
+    [Header("Coarse Disparity Search Range [px]")]
+    public int positiveDispMinPx = 0;
+    public int positiveDispMaxPx = 200;
+    public int negativeDispMinPx = -200;
+    public int negativeDispMaxPx = 0;
+
+    [Header("Fine Disparity Search [px]")]
+    [Tooltip("整数探索で得た最良値の前後を，この幅だけ小数探索する")]
+    public float fineSearchHalfWidthPx = 1.0f;
+
+    [Tooltip("小数視差探索の刻み幅")]
+    public float fineSearchStepPx = 0.01f;
 
     // =========================================================
-    // Random dot
+    // Random grayscale
     // =========================================================
 
-    [Header("Random Dot")]
-    [Range(0.0f, 1.0f)]
-    public float pWhite = 0.5f;
-
+    [Header("Random Grayscale")]
+    [Tooltip("背景パターンのseed")]
     public float backgroundSeed = 1.0f;
+
+    [Tooltip("円内部パターンのseed。同じ値にすると単眼で境界が見えにくい")]
     public float objectSeed = 1.0f;
 
     // =========================================================
@@ -125,7 +132,7 @@ public class RDSController : MonoBehaviour
     // =========================================================
 
     [Header("Result")]
-    [SerializeField] private int bestDisparityPx;
+    [SerializeField] private float bestDisparityPx;
     [SerializeField] private float halfDisparityPx;
     [SerializeField] private float actualAngleDeg;
     [SerializeField] private float errorDeg;
@@ -208,6 +215,9 @@ public class RDSController : MonoBehaviour
         IPD = Mathf.Max(0.0f, IPD);
         circleRadiusWorld = Mathf.Max(0.0f, circleRadiusWorld);
 
+        fineSearchHalfWidthPx = Mathf.Max(0.0f, fineSearchHalfWidthPx);
+        fineSearchStepPx = Mathf.Max(0.000001f, fineSearchStepPx);
+
         if (positiveDispMinPx > positiveDispMaxPx)
         {
             positiveDispMinPx = positiveDispMaxPx;
@@ -247,11 +257,21 @@ public class RDSController : MonoBehaviour
     {
         ValidateParameters();
 
+        if (displayProfiles == null || displayProfiles.Length == 0)
+        {
+            Debug.LogError("Display Profiles が設定されていません。");
+            return;
+        }
+
         displayNum = Mathf.Clamp(displayNum, 0, displayProfiles.Length - 1);
 
         DisplayProfile profile = displayProfiles[displayNum];
 
-
+        if (profile == null)
+        {
+            Debug.LogError($"DisplayProfile {displayNum} が null です。");
+            return;
+        }
 
         activeWidthPx = Mathf.Max(1, profile.widthPx);
         activeHeightPx = Mathf.Max(1, profile.heightPx);
@@ -313,9 +333,38 @@ public class RDSController : MonoBehaviour
 
     void InitializeMaterials()
     {
+        if (activeLeftQuadRenderer == null || activeRightQuadRenderer == null)
+        {
+            Debug.LogError("Profile内の LeftQuadRenderer または RightQuadRenderer が未設定です。");
+            return;
+        }
+
         leftMat = activeLeftQuadRenderer.material;
         rightMat = activeRightQuadRenderer.material;
 
+        if (activeLeftQuadRenderer.sharedMaterial == activeRightQuadRenderer.sharedMaterial)
+        {
+            Debug.LogWarning(
+                "LeftQuad と RightQuad が同じMaterialアセットを参照しています。" +
+                "RDS_L.mat と RDS_R.mat を別々に用意して割り当ててください。"
+            );
+        }
+
+        if (leftMat == null || rightMat == null)
+        {
+            Debug.LogError("左右いずれかのMaterialがnullです。");
+            return;
+        }
+
+        if (leftMat.shader == null || leftMat.shader.name != "Unlit/RDS")
+        {
+            Debug.LogWarning($"Left material shader is {leftMat.shader?.name}. Unlit/RDS を指定してください。");
+        }
+
+        if (rightMat.shader == null || rightMat.shader.name != "Unlit/RDS")
+        {
+            Debug.LogWarning($"Right material shader is {rightMat.shader?.name}. Unlit/RDS を指定してください。");
+        }
     }
 
     // =========================================================
@@ -445,7 +494,6 @@ public class RDSController : MonoBehaviour
 
         mat.SetFloat("_HalfDisparityPx", halfDisparityPx);
 
-        mat.SetFloat("_PWhite", pWhite);
         mat.SetFloat("_BackgroundSeed", backgroundSeed);
         mat.SetFloat("_ObjectSeed", objectSeed);
 
@@ -466,11 +514,23 @@ public class RDSController : MonoBehaviour
     Vector3 GetDisplayPointMm(float xMm, float yMm)
     {
         // displayNum = 1:
-        // 平面ディスプレイ．表示面を z = 0 とする．
+        // 平面ディスプレイ。表示面を z = 0 とする。
         if (displayNum == 1)
         {
             return new Vector3(xMm, yMm, 0.0f);
         }
+
+        // displayNum = 0:
+        // 1000R曲面ディスプレイ。
+        // 水平方向だけ曲率を持つ円柱面として扱う。
+        //
+        // ディスプレイ中心 = (0, 0, 0)
+        // 視聴者側 = +z
+        // 曲率中心 = (0, 0, Curvature)
+        //
+        // x^2 + (z - Curvature)^2 = Curvature^2
+        //
+        // z = Curvature - sqrt(Curvature^2 - x^2)
 
         float inside = Curvature * Curvature - xMm * xMm;
 
@@ -543,48 +603,100 @@ public class RDSController : MonoBehaviour
     }
 
     // =========================================================
-    // Search
+    // Disparity search
     // =========================================================
 
-    int SolveDisparityForTargetAngle()
+    float SolveDisparityForTargetAngle()
     {
         if (Mathf.Approximately(targetAngleDeg, 0.0f))
         {
-            return 0;
+            return 0.0f;
         }
 
-        int start;
-        int end;
+        int coarseStart;
+        int coarseEnd;
 
         if (targetAngleDeg > 0.0f)
         {
-            start = positiveDispMinPx;
-            end = positiveDispMaxPx;
+            coarseStart = positiveDispMinPx;
+            coarseEnd = positiveDispMaxPx;
         }
         else
         {
-            start = negativeDispMinPx;
-            end = negativeDispMaxPx;
+            coarseStart = negativeDispMinPx;
+            coarseEnd = negativeDispMaxPx;
         }
 
-        int bestDisp = start;
-        float bestTheta = DispPxToAngleDeg(start);
-        float bestError = Mathf.Abs(bestTheta - targetAngleDeg);
+        if (coarseStart > coarseEnd)
+        {
+            Debug.LogError("視差探索範囲が不正です。min <= max になるように設定してください。");
+            return 0.0f;
+        }
 
-        for (int d = start; d <= end; d++)
+        // -----------------------------
+        // 1. 整数視差で粗探索
+        // -----------------------------
+        float bestCoarseDisp = coarseStart;
+        float bestCoarseTheta = DispPxToAngleDeg(bestCoarseDisp);
+        float bestCoarseError = Mathf.Abs(bestCoarseTheta - targetAngleDeg);
+
+        for (int d = coarseStart; d <= coarseEnd; d++)
         {
             float theta = DispPxToAngleDeg(d);
             float err = Mathf.Abs(theta - targetAngleDeg);
 
-            if (err < bestError)
+            if (err < bestCoarseError)
             {
-                bestDisp = d;
-                bestTheta = theta;
-                bestError = err;
+                bestCoarseDisp = d;
+                bestCoarseTheta = theta;
+                bestCoarseError = err;
             }
         }
 
-        return bestDisp;
+        // -----------------------------
+        // 2. 最良整数値の周囲を小数探索
+        // -----------------------------
+        float fineMin = bestCoarseDisp - fineSearchHalfWidthPx;
+        float fineMax = bestCoarseDisp + fineSearchHalfWidthPx;
+
+        if (targetAngleDeg > 0.0f)
+        {
+            fineMin = Mathf.Max(fineMin, positiveDispMinPx);
+            fineMax = Mathf.Min(fineMax, positiveDispMaxPx);
+        }
+        else
+        {
+            fineMin = Mathf.Max(fineMin, negativeDispMinPx);
+            fineMax = Mathf.Min(fineMax, negativeDispMaxPx);
+        }
+
+        float bestFineDisp = bestCoarseDisp;
+        float bestFineTheta = bestCoarseTheta;
+        float bestFineError = bestCoarseError;
+
+        int fineSteps = Mathf.CeilToInt((fineMax - fineMin) / fineSearchStepPx);
+
+        for (int i = 0; i <= fineSteps; i++)
+        {
+            float d = fineMin + i * fineSearchStepPx;
+
+            if (d > fineMax)
+            {
+                d = fineMax;
+            }
+
+            float theta = DispPxToAngleDeg(d);
+            float err = Mathf.Abs(theta - targetAngleDeg);
+
+            if (err < bestFineError)
+            {
+                bestFineDisp = d;
+                bestFineTheta = theta;
+                bestFineError = err;
+            }
+        }
+
+        return bestFineDisp;
     }
 
     // =========================================================
